@@ -180,14 +180,14 @@ The UI is not a DJ controller.
 
 ---
 
-## Technology (TBD)
+## Technology (MVP Bootstrap)
 
-- Audio Engine: TBD
-- Backend Logic: TBD
-- UI Framework: TBD
-- Storage: SQLite / JSON
+- Audio Engine: simulated transport loop (real mixer integration next)
+- Backend Logic: Python + FastAPI
+- UI Framework: Web UI (HTML/CSS/JS) served by backend
+- Storage: SQLite (experience scoring)
 
-Technology choice intentionally postponed.
+This repository now includes a working MVP bootstrap for decision loop + UI feedback.
 
 ---
 
@@ -212,4 +212,56 @@ Learning last.
 
 ## Project Status
 
-Early design / repository bootstrap phase.
+MVP bootstrap phase.
+
+---
+
+## Implemented MVP Skeleton
+
+### Backend Endpoints
+
+- `POST /library/scan`
+- `POST /session/start`
+- `POST /session/stop`
+- `GET /state`
+- `POST /feedback`
+- `GET /scores`
+- `WS /ws/state`
+
+### Web UI Features
+
+- Deck A / Deck B visual state with progress bars
+- Session status indicator
+- GOOD DROP / BAD DROP buttons
+- Live score table (top learned combinations)
+
+### Run Locally
+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn autodj.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Then open: `http://localhost:8000`
+
+### Track directory configuration
+
+You can point the app to your music folder in two ways:
+
+1. Environment variable (default scan path):
+
+```bash
+export AUTODJ_MUSIC_DIR=/absolute/path/to/your/tracks
+uvicorn autodj.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+2. Per-request path via API scan endpoint:
+
+```bash
+curl -X POST "http://localhost:8000/library/scan?path=/absolute/path/to/your/tracks"
+```
+
+`/session/start` now requires at least 2 scanned tracks, so the normal flow is: scan library -> start session.

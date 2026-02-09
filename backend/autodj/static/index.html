@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Autonomous DJ MVP</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #0d1117; color: #e6edf3; }
+    main { max-width: 960px; margin: 24px auto; padding: 0 16px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; }
+    .wave { height: 48px; border-radius: 6px; background: linear-gradient(90deg, #238636 var(--progress), #30363d var(--progress)); position: relative; }
+    .wave::after { content: ''; position: absolute; top: 0; bottom: 0; left: var(--progress); width: 2px; background: #f85149; }
+    .controls { margin-top: 16px; display: flex; gap: 10px; }
+    button { padding: 8px 12px; border-radius: 6px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; cursor: pointer; }
+    .good { background: #1f6feb; }
+    .bad { background: #da3633; }
+    table { width: 100%; margin-top: 16px; border-collapse: collapse; }
+    td, th { border-bottom: 1px solid #30363d; padding: 6px; text-align: left; font-size: 14px; }
+    .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #8250df; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>🎧 Autonomous DJ MVP</h1>
+    <div class="controls">
+      <button id="start">Start Session</button>
+      <button id="stop">Stop Session</button>
+      <span id="status" class="pill">stopped</span>
+    </div>
+
+    <div class="row" style="margin-top: 16px;">
+      <section class="card">
+        <h3>Deck A: <span id="a-title">—</span></h3>
+        <div class="wave" id="a-wave"></div>
+        <small>Drop window: <span id="a-drop">no</span></small>
+      </section>
+      <section class="card">
+        <h3>Deck B: <span id="b-title">—</span></h3>
+        <div class="wave" id="b-wave"></div>
+        <small>Drop window: <span id="b-drop">no</span></small>
+      </section>
+    </div>
+
+    <div class="controls">
+      <button class="good" id="good">GOOD DROP</button>
+      <button class="bad" id="bad">BAD DROP</button>
+    </div>
+
+    <section class="card" style="margin-top:16px;">
+      <h3>Learned scores (top)</h3>
+      <table>
+        <thead><tr><th>Mode</th><th>Pair</th><th>Transition</th><th>Score</th><th>+/−</th></tr></thead>
+        <tbody id="scores"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script>
+    let latest = null;
+
+    const setDeck = (prefix, deck) => {
+      document.getElementById(`${prefix}-title`).textContent = deck.title || '—';
+      const progress = Math.min(100, (deck.progress_s / deck.duration_s) * 100);
+      document.getElementById(`${prefix}-wave`).style.setProperty('--progress', `${progress}%`);
+      document.getElementById(`${prefix}-drop`).textContent = deck.is_drop_window ? 'YES' : 'no';
+    };
+
+    const updateScores = async () => {
+      const data = await fetch('/scores').then(r => r.json());
+      document.getElementById('scores').innerHTML = data.rows.map(row => `
+        <tr><td>${row.mode}</td><td>${row.track_a || '-'} + ${row.track_b || '-'}</td><td>${row.transition_type}</td><td>${row.score}</td><td>${row.n_positive}/${row.n_negative}</td></tr>
+      `).join('');
+    };
+
+    const sendFeedback = async (label) => {
+      if (!latest || !latest.current_decision) return;
+      await fetch('/feedback', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          label,
+          decision_mode: latest.current_decision.mode,
+          track_a: latest.current_decision.track_a,
+          track_b: latest.current_decision.track_b,
+          transition_type: latest.current_decision.transition_type,
+          context_bucket: 'mvp'
+        })
+      });
+      await updateScores();
+    };
+
+    document.getElementById('start').onclick = async () => { await fetch('/session/start', {method: 'POST'}); };
+    document.getElementById('stop').onclick = async () => { await fetch('/session/stop', {method: 'POST'}); };
+    document.getElementById('good').onclick = () => sendFeedback('GOOD');
+    document.getElementById('bad').onclick = () => sendFeedback('BAD');
+
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/state`);
+    ws.onmessage = (msg) => {
+      latest = JSON.parse(msg.data);
+      document.getElementById('status').textContent = latest.status;
+      setDeck('a', latest.deck_a);
+      setDeck('b', latest.deck_b);
+    };
+
+    updateScores();
+  </script>
+</body>
+</html>
