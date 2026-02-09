@@ -245,9 +245,15 @@ pip install -r requirements.txt
 uvicorn autodj.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+> If you created the virtualenv before this update, run `pip install -r requirements.txt` again so WebSocket support is installed.
+
 Then open: `http://localhost:8000`
 
 ### Track directory configuration
+
+By default, the app now creates and scans `backend/music` on startup.
+Drop your `.wav` / `.mp3` / `.flac` files there for the quickest local test.
+Startup and manual scans print progress logs in the server terminal.
 
 You can point the app to your music folder in two ways:
 

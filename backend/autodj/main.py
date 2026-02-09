@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 import uuid
@@ -25,8 +26,10 @@ from .store import ExperienceStore
 ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = ROOT / "autodj" / "static"
 DB_PATH = ROOT / "data" / "autodj.sqlite"
-DEFAULT_MUSIC_DIR = Path(os.getenv("AUTODJ_MUSIC_DIR", "./music"))
+DEFAULT_MUSIC_DIR = Path(os.getenv("AUTODJ_MUSIC_DIR", str(ROOT / "music")))
 SUPPORTED_EXTENSIONS = {".wav", ".mp3", ".flac"}
+
+logger = logging.getLogger("autodj")
 
 app = FastAPI(title="Autonomous DJ MVP")
 app.add_middleware(
@@ -61,9 +64,24 @@ def _placeholder_metadata(track_path: Path) -> TrackMetadata:
 
 
 def _scan_tracks(scan_path: Path) -> list[TrackMetadata]:
+    logger.info("Scan started: %s", scan_path)
     files = [p for p in scan_path.rglob("*") if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS]
     files.sort()
-    return [_placeholder_metadata(path) for path in files]
+
+    total = len(files)
+    if total == 0:
+        logger.warning("Scan finished: no supported tracks found in %s", scan_path)
+        return []
+
+    tracks: list[TrackMetadata] = []
+    for index, path in enumerate(files, start=1):
+        tracks.append(_placeholder_metadata(path))
+        if total <= 10 or index == total or index % max(1, total // 10) == 0:
+            percent = int(index / total * 100)
+            logger.info("Scan progress: %s/%s (%s%%)", index, total, percent)
+
+    logger.info("Scan finished: found %s tracks in %s", total, scan_path)
+    return tracks
 
 
 @app.post("/library/scan", response_model=ScanResult)
@@ -144,6 +162,11 @@ async def tick_state() -> None:
 
 @app.on_event("startup")
 async def on_startup() -> None:
+    DEFAULT_MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        "Music directory ready: %s (set AUTODJ_MUSIC_DIR to override)",
+        DEFAULT_MUSIC_DIR.resolve(),
+    )
     if DEFAULT_MUSIC_DIR.exists() and DEFAULT_MUSIC_DIR.is_dir():
         library.tracks = _scan_tracks(DEFAULT_MUSIC_DIR)
     asyncio.create_task(tick_state())
