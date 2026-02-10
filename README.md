@@ -182,7 +182,7 @@ The UI is not a DJ controller.
 
 ## Technology (MVP Bootstrap)
 
-- Audio Engine: simulated transport loop (real mixer integration next)
+- Audio Engine: browser playback prototype (2 decks) + simulated transport state
 - Backend Logic: Python + FastAPI
 - UI Framework: Web UI (HTML/CSS/JS) served by backend
 - Storage: SQLite (experience scoring)
@@ -220,6 +220,8 @@ MVP bootstrap phase.
 
 ### Backend Endpoints
 
+- `GET /library`
+- `GET /media?track_id=...`
 - `POST /library/scan`
 - `POST /session/start`
 - `POST /session/stop`
@@ -231,6 +233,10 @@ MVP bootstrap phase.
 ### Web UI Features
 
 - Deck A / Deck B visual state with progress bars
+- Real browser audio playback for both decks
+- BPM target matching (playback rate adjusts tracks toward 140 BPM)
+- Track metadata display (title / BPM / key)
+- Central dual-waveform mixer view with a vertical playhead (VirtualDJ-style)
 - Session status indicator
 - GOOD DROP / BAD DROP buttons
 - Live score table (top learned combinations)

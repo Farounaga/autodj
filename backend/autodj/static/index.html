@@ -6,37 +6,101 @@
   <title>Autonomous DJ MVP</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 0; background: #0d1117; color: #e6edf3; }
-    main { max-width: 960px; margin: 24px auto; padding: 0 16px; }
+    main { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
     .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
     .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; }
-    .wave { height: 48px; border-radius: 6px; background: linear-gradient(90deg, #238636 var(--progress), #30363d var(--progress)); position: relative; }
+    .wave { height: 14px; border-radius: 6px; background: linear-gradient(90deg, #238636 var(--progress), #30363d var(--progress)); position: relative; }
     .wave::after { content: ''; position: absolute; top: 0; bottom: 0; left: var(--progress); width: 2px; background: #f85149; }
-    .controls { margin-top: 16px; display: flex; gap: 10px; }
+    .controls { margin-top: 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     button { padding: 8px 12px; border-radius: 6px; border: 1px solid #30363d; background: #21262d; color: #e6edf3; cursor: pointer; }
     .good { background: #1f6feb; }
     .bad { background: #da3633; }
     table { width: 100%; margin-top: 16px; border-collapse: collapse; }
     td, th { border-bottom: 1px solid #30363d; padding: 6px; text-align: left; font-size: 14px; }
     .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: #8250df; }
+    .meta { display: flex; gap: 16px; font-size: 13px; opacity: 0.92; margin: 8px 0; }
+    .small { font-size: 12px; opacity: 0.9; }
+    .mixer-wrap {
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      margin-top: 16px;
+      background: #0b0f14;
+      position: relative;
+      padding: 8px;
+    }
+    .mixer-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #8b949e;
+      margin-bottom: 6px;
+    }
+    #mixer-wave {
+      width: 100%;
+      height: 180px;
+      display: block;
+      border-radius: 6px;
+      background: #05080d;
+    }
+    .center-line {
+      position: absolute;
+      top: 28px;
+      bottom: 8px;
+      left: 50%;
+      width: 2px;
+      background: #ff4d4f;
+      transform: translateX(-50%);
+      box-shadow: 0 0 10px rgba(255, 77, 79, 0.65);
+      pointer-events: none;
+    }
+    .center-line::before {
+      content: 'PLAYHEAD';
+      position: absolute;
+      top: -18px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 10px;
+      color: #ff7b72;
+      letter-spacing: 0.08em;
+    }
   </style>
 </head>
 <body>
   <main>
     <h1>🎧 Autonomous DJ MVP</h1>
     <div class="controls">
+      <button id="scan">Scan default folder</button>
       <button id="start">Start Session</button>
       <button id="stop">Stop Session</button>
       <span id="status" class="pill">stopped</span>
+      <span class="small">Target BPM: <strong id="target-bpm">140</strong></span>
+      <span class="small" id="library-count">Tracks: 0</span>
     </div>
+
+    <section class="mixer-wrap">
+      <div class="mixer-labels"><span>Deck A waveform</span><span>Deck B waveform</span></div>
+      <canvas id="mixer-wave" width="1060" height="180"></canvas>
+      <div class="center-line"></div>
+    </section>
 
     <div class="row" style="margin-top: 16px;">
       <section class="card">
         <h3>Deck A: <span id="a-title">—</span></h3>
+        <div class="meta">
+          <span>Track BPM: <strong id="a-bpm">—</strong></span>
+          <span>Key: <strong id="a-key">—</strong></span>
+          <span>Playback rate: <strong id="a-rate">1.00x</strong></span>
+        </div>
         <div class="wave" id="a-wave"></div>
         <small>Drop window: <span id="a-drop">no</span></small>
       </section>
       <section class="card">
         <h3>Deck B: <span id="b-title">—</span></h3>
+        <div class="meta">
+          <span>Track BPM: <strong id="b-bpm">—</strong></span>
+          <span>Key: <strong id="b-key">—</strong></span>
+          <span>Playback rate: <strong id="b-rate">1.00x</strong></span>
+        </div>
         <div class="wave" id="b-wave"></div>
         <small>Drop window: <span id="b-drop">no</span></small>
       </section>
@@ -54,16 +118,34 @@
         <tbody id="scores"></tbody>
       </table>
     </section>
+
+    <audio id="deck-a-audio" crossorigin="anonymous"></audio>
+    <audio id="deck-b-audio" crossorigin="anonymous"></audio>
   </main>
 
   <script>
     let latest = null;
+    let libraryMap = new Map();
+    let audioCtx = null;
+    let rafId = null;
+    let aAnalyser = null;
+    let bAnalyser = null;
 
-    const setDeck = (prefix, deck) => {
-      document.getElementById(`${prefix}-title`).textContent = deck.title || '—';
-      const progress = Math.min(100, (deck.progress_s / deck.duration_s) * 100);
-      document.getElementById(`${prefix}-wave`).style.setProperty('--progress', `${progress}%`);
-      document.getElementById(`${prefix}-drop`).textContent = deck.is_drop_window ? 'YES' : 'no';
+    const aAudio = document.getElementById('deck-a-audio');
+    const bAudio = document.getElementById('deck-b-audio');
+
+    const safeNum = (v, fallback = 140) => Number.isFinite(v) ? v : fallback;
+
+    const setDeckVisual = (prefix, progressPct, isDropWindow) => {
+      document.getElementById(`${prefix}-wave`).style.setProperty('--progress', `${Math.min(100, Math.max(0, progressPct))}%`);
+      document.getElementById(`${prefix}-drop`).textContent = isDropWindow ? 'YES' : 'no';
+    };
+
+    const setDeckMeta = (prefix, deck, rate) => {
+      document.getElementById(`${prefix}-title`).textContent = deck?.title || '—';
+      document.getElementById(`${prefix}-bpm`).textContent = deck?.bpm ? deck.bpm.toFixed(1) : '—';
+      document.getElementById(`${prefix}-key`).textContent = deck?.key || 'Unknown';
+      document.getElementById(`${prefix}-rate`).textContent = `${rate.toFixed(3)}x`;
     };
 
     const updateScores = async () => {
@@ -71,6 +153,105 @@
       document.getElementById('scores').innerHTML = data.rows.map(row => `
         <tr><td>${row.mode}</td><td>${row.track_a || '-'} + ${row.track_b || '-'}</td><td>${row.transition_type}</td><td>${row.score}</td><td>${row.n_positive}/${row.n_negative}</td></tr>
       `).join('');
+    };
+
+    const loadLibrary = async () => {
+      const data = await fetch('/library').then(r => r.json());
+      libraryMap = new Map((data.tracks || []).map(track => [track.track_id, track]));
+      document.getElementById('library-count').textContent = `Tracks: ${libraryMap.size}`;
+    };
+
+    const createDeckAnalyser = (audioEl) => {
+      const source = audioCtx.createMediaElementSource(audioEl);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+      analyser.connect(audioCtx.destination);
+      return analyser;
+    };
+
+    const drawMixedWaveforms = () => {
+      const canvas = document.getElementById('mixer-wave');
+      const ctx = canvas.getContext('2d');
+      const midY = canvas.height / 2;
+
+      const drawGrid = () => {
+        ctx.fillStyle = '#05080d';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = '#1f2933';
+        ctx.lineWidth = 1;
+        for (let x = 0; x < canvas.width; x += 60) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, canvas.height);
+          ctx.stroke();
+        }
+        ctx.beginPath();
+        ctx.moveTo(0, midY);
+        ctx.lineTo(canvas.width, midY);
+        ctx.strokeStyle = '#2d3742';
+        ctx.stroke();
+      };
+
+      const drawDeck = (analyser, color, yCenter, heightScale) => {
+        if (!analyser) return;
+        const buffer = new Uint8Array(analyser.fftSize);
+        analyser.getByteTimeDomainData(buffer);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        const step = canvas.width / buffer.length;
+        for (let i = 0; i < buffer.length; i++) {
+          const amplitude = (buffer[i] - 128) / 128;
+          const y = yCenter + amplitude * heightScale;
+          const x = i * step;
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      };
+
+      const loop = () => {
+        drawGrid();
+        drawDeck(aAnalyser, '#58a6ff', midY - 35, 28);
+        drawDeck(bAnalyser, '#7ee787', midY + 35, 28);
+        rafId = requestAnimationFrame(loop);
+      };
+
+      loop();
+    };
+
+    const setupAudioGraph = async () => {
+      if (audioCtx) return;
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      aAnalyser = createDeckAnalyser(aAudio);
+      bAnalyser = createDeckAnalyser(bAudio);
+      drawMixedWaveforms();
+    };
+
+    const playDeck = async (audioEl, deck, targetBpm, prefix) => {
+      if (!deck?.track_id) return;
+      const track = libraryMap.get(deck.track_id) || {};
+      const trackBpm = safeNum(deck.bpm ?? track.bpm, 140);
+      const rate = safeNum(targetBpm, 140) / trackBpm;
+      const mediaUrl = track.media_url || `/media?track_id=${encodeURIComponent(deck.track_id)}`;
+      if (audioEl.src !== new URL(mediaUrl, location.origin).toString()) {
+        audioEl.src = mediaUrl;
+      }
+      audioEl.playbackRate = rate;
+      audioEl.volume = 0.65;
+      audioEl.loop = true;
+      await audioEl.play();
+      setDeckMeta(prefix, { ...deck, bpm: trackBpm, key: deck.key ?? track.key }, rate);
+    };
+
+    const stopAudio = () => {
+      aAudio.pause();
+      bAudio.pause();
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
     };
 
     const sendFeedback = async (label) => {
@@ -89,8 +270,26 @@
       await updateScores();
     };
 
-    document.getElementById('start').onclick = async () => { await fetch('/session/start', {method: 'POST'}); };
-    document.getElementById('stop').onclick = async () => { await fetch('/session/stop', {method: 'POST'}); };
+    document.getElementById('scan').onclick = async () => {
+      await fetch('/library/scan', {method: 'POST'});
+      await loadLibrary();
+    };
+
+    document.getElementById('start').onclick = async () => {
+      await setupAudioGraph();
+      await fetch('/session/start', {method: 'POST'});
+      const fresh = await fetch('/state').then(r => r.json());
+      latest = fresh;
+      document.getElementById('target-bpm').textContent = (fresh.bpm_target || 140).toFixed(1);
+      await loadLibrary();
+      await playDeck(aAudio, fresh.deck_a, fresh.bpm_target || 140, 'a');
+      await playDeck(bAudio, fresh.deck_b, fresh.bpm_target || 140, 'b');
+    };
+
+    document.getElementById('stop').onclick = async () => {
+      await fetch('/session/stop', {method: 'POST'});
+      stopAudio();
+    };
     document.getElementById('good').onclick = () => sendFeedback('GOOD');
     document.getElementById('bad').onclick = () => sendFeedback('BAD');
 
@@ -98,10 +297,20 @@
     ws.onmessage = (msg) => {
       latest = JSON.parse(msg.data);
       document.getElementById('status').textContent = latest.status;
-      setDeck('a', latest.deck_a);
-      setDeck('b', latest.deck_b);
+      document.getElementById('target-bpm').textContent = (latest.bpm_target || 140).toFixed(1);
+
+      const aDur = Math.max(aAudio.duration || latest.deck_a.duration_s || 1, 1);
+      const bDur = Math.max(bAudio.duration || latest.deck_b.duration_s || 1, 1);
+      const aPct = ((aAudio.currentTime || latest.deck_a.progress_s) / aDur) * 100;
+      const bPct = ((bAudio.currentTime || latest.deck_b.progress_s) / bDur) * 100;
+      setDeckVisual('a', aPct, latest.deck_a.is_drop_window);
+      setDeckVisual('b', bPct, latest.deck_b.is_drop_window);
+
+      if (latest.deck_a) setDeckMeta('a', latest.deck_a, aAudio.playbackRate || 1);
+      if (latest.deck_b) setDeckMeta('b', latest.deck_b, bAudio.playbackRate || 1);
     };
 
+    loadLibrary();
     updateScores();
   </script>
 </body>

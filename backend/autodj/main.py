@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
-from fastapi import FastAPI, HTTPException, Query, WebSocket
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,6 +30,9 @@ STATIC_DIR = ROOT / "autodj" / "static"
 DB_PATH = ROOT / "data" / "autodj.sqlite"
 DEFAULT_MUSIC_DIR = Path(os.getenv("AUTODJ_MUSIC_DIR", str(ROOT / "music")))
 SUPPORTED_EXTENSIONS = {".wav", ".mp3", ".flac"}
+TARGET_BPM = 140.0
+
+logger = logging.getLogger("autodj")
 
 logger = logging.getLogger("autodj")
 
@@ -51,13 +56,34 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
+def _extract_bpm_key(track_path: Path) -> tuple[float, str]:
+    name = track_path.stem
+
+    bpm_match = re.search(r"(?<!\d)(\d{2,3}(?:\.\d+)?)\s?bpm(?!\d)", name, flags=re.IGNORECASE)
+    bpm = TARGET_BPM
+    if bpm_match:
+        candidate = float(bpm_match.group(1))
+        if 60 <= candidate <= 220:
+            bpm = candidate
+
+    camelot_match = re.search(r"(?<![A-Za-z0-9])(\d{1,2}[AB])(?![A-Za-z0-9])", name, flags=re.IGNORECASE)
+    if camelot_match:
+        return bpm, camelot_match.group(1).upper()
+
+    key_match = re.search(r"(?<![A-Za-z0-9])([A-G](?:#|b)?m?)(?![A-Za-z0-9])", name)
+    if key_match:
+        return bpm, key_match.group(1)
+
+    return bpm, "Unknown"
+
+
 def _placeholder_metadata(track_path: Path) -> TrackMetadata:
-    """Build minimal metadata until offline analyzer is connected."""
+    bpm, key = _extract_bpm_key(track_path)
     return TrackMetadata(
         track_id=str(track_path.resolve()),
         title=track_path.stem,
-        bpm=140,
-        key="Unknown",
+        bpm=bpm,
+        key=key,
         drop_times=[32.0, 64.0],
         duration_s=180,
     )
@@ -106,16 +132,26 @@ def start_session() -> SessionState:
             detail="Need at least 2 tracks. Run /library/scan with your music directory first.",
         )
 
+    track_a = library.tracks[0]
+    track_b = library.tracks[1]
     state.session_id = str(uuid.uuid4())
     state.status = SessionStatus.running
-    state.deck_a.track_id = library.tracks[0].track_id
-    state.deck_a.title = library.tracks[0].title
-    state.deck_a.duration_s = library.tracks[0].duration_s
-    state.deck_b.track_id = library.tracks[1].track_id
-    state.deck_b.title = library.tracks[1].title
-    state.deck_b.duration_s = library.tracks[1].duration_s
+    state.bpm_target = TARGET_BPM
+
+    state.deck_a.track_id = track_a.track_id
+    state.deck_a.title = track_a.title
+    state.deck_a.duration_s = track_a.duration_s
+    state.deck_a.bpm = track_a.bpm
+    state.deck_a.key = track_a.key
+
+    state.deck_b.track_id = track_b.track_id
+    state.deck_b.title = track_b.title
+    state.deck_b.duration_s = track_b.duration_s
+    state.deck_b.bpm = track_b.bpm
+    state.deck_b.key = track_b.key
+
     state.current_decision = DecisionEvent(
-        mode="single",
+        mode="double",
         transition_type="hard_cut",
         reason="bootstrap decision",
         timestamp_s=time.time(),
@@ -153,8 +189,8 @@ def get_scores() -> dict[str, list[dict[str, str | float | int | None]]]:
 async def tick_state() -> None:
     while True:
         if state.status == SessionStatus.running:
-            state.deck_a.progress_s = (state.deck_a.progress_s + 0.5) % state.deck_a.duration_s
-            state.deck_b.progress_s = (state.deck_b.progress_s + 0.5) % state.deck_b.duration_s
+            state.deck_a.progress_s = (state.deck_a.progress_s + 0.5) % max(state.deck_a.duration_s, 1.0)
+            state.deck_b.progress_s = (state.deck_b.progress_s + 0.5) % max(state.deck_b.duration_s, 1.0)
             state.deck_a.is_drop_window = 26 <= state.deck_a.progress_s % 32 <= 30
             state.deck_b.is_drop_window = 30 <= state.deck_b.progress_s % 32 <= 34
         await asyncio.sleep(0.5)
@@ -179,5 +215,5 @@ async def ws_state(ws: WebSocket) -> None:
         while True:
             await ws.send_json(state.model_dump(mode="json"))
             await asyncio.sleep(0.5)
-    finally:
-        await ws.close()
+    except WebSocketDisconnect:
+        return
