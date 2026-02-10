@@ -34,6 +34,8 @@ TARGET_BPM = 140.0
 
 logger = logging.getLogger("autodj")
 
+logger = logging.getLogger("autodj")
+
 app = FastAPI(title="Autonomous DJ MVP")
 app.add_middleware(
     CORSMiddleware,
@@ -106,40 +108,6 @@ def _scan_tracks(scan_path: Path) -> list[TrackMetadata]:
 
     logger.info("Scan finished: found %s tracks in %s", total, scan_path)
     return tracks
-
-
-def _find_track(track_id: str) -> TrackMetadata | None:
-    return next((track for track in library.tracks if track.track_id == track_id), None)
-
-
-def _to_library_payload(track: TrackMetadata) -> dict[str, str | float | list[float]]:
-    return {
-        "track_id": track.track_id,
-        "title": track.title,
-        "bpm": track.bpm,
-        "key": track.key,
-        "drop_times": track.drop_times,
-        "duration_s": track.duration_s,
-        "media_url": f"/media?track_id={quote(track.track_id, safe='')}",
-    }
-
-
-@app.get("/library")
-def get_library() -> dict[str, list[dict[str, str | float | list[float]]]]:
-    return {"tracks": [_to_library_payload(track) for track in library.tracks]}
-
-
-@app.get("/media")
-def get_media(track_id: str = Query(...)) -> FileResponse:
-    track = _find_track(track_id)
-    if not track:
-        raise HTTPException(status_code=404, detail="Track not found in scanned library")
-
-    track_path = Path(track.track_id)
-    if not track_path.exists() or not track_path.is_file():
-        raise HTTPException(status_code=404, detail=f"Track file missing: {track_path}")
-
-    return FileResponse(track_path)
 
 
 @app.post("/library/scan", response_model=ScanResult)
