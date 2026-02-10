@@ -29,6 +29,8 @@ class DeckState(BaseModel):
     deck_id: Literal["A", "B"]
     track_id: str | None = None
     title: str | None = None
+    bpm: float | None = None
+    key: str | None = None
     progress_s: float = 0.0
     duration_s: float = 1.0
     is_drop_window: bool = False

@@ -182,7 +182,7 @@ The UI is not a DJ controller.
 
 ## Technology (MVP Bootstrap)
 
-- Audio Engine: simulated transport loop (real mixer integration next)
+- Audio Engine: browser playback prototype (2 decks) + simulated transport state
 - Backend Logic: Python + FastAPI
 - UI Framework: Web UI (HTML/CSS/JS) served by backend
 - Storage: SQLite (experience scoring)
@@ -220,6 +220,8 @@ MVP bootstrap phase.
 
 ### Backend Endpoints
 
+- `GET /library`
+- `GET /media?track_id=...`
 - `POST /library/scan`
 - `POST /session/start`
 - `POST /session/stop`
@@ -231,6 +233,10 @@ MVP bootstrap phase.
 ### Web UI Features
 
 - Deck A / Deck B visual state with progress bars
+- Real browser audio playback for both decks
+- BPM target matching (playback rate adjusts tracks toward 140 BPM)
+- Track metadata display (title / BPM / key)
+- Central dual-waveform mixer view with a vertical playhead (VirtualDJ-style)
 - Session status indicator
 - GOOD DROP / BAD DROP buttons
 - Live score table (top learned combinations)
@@ -245,9 +251,15 @@ pip install -r requirements.txt
 uvicorn autodj.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+> If you created the virtualenv before this update, run `pip install -r requirements.txt` again so WebSocket support is installed.
+
 Then open: `http://localhost:8000`
 
 ### Track directory configuration
+
+By default, the app now creates and scans `backend/music` on startup.
+Drop your `.wav` / `.mp3` / `.flac` files there for the quickest local test.
+Startup and manual scans print progress logs in the server terminal.
 
 You can point the app to your music folder in two ways:
 
